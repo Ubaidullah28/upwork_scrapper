@@ -7,7 +7,10 @@ from database_operation import (
     insert_jobs_into_public_job,
     read_last_scrape_time,
     insert_raw_json_data,
-    insert_df_into_staging_lead
+    insert_df_into_staging_lead,
+    get_max_lead_id,
+    insert_df_into_staging_client,
+    insert_df_into_staging_tag
 )
 
 from datetime import datetime
@@ -55,14 +58,34 @@ def main():
             print(f"Raw JSON data inserted successfully with job_id: {job_id}")
         else:
             print("Failed to insert raw JSON data")
+        
+        # Get max lead_id before lead insertion
+        max_lead_id_before = get_max_lead_id()
+        print(f"Max lead_id before lead insertion: {max_lead_id_before}")
 
-         # Step 3: Insert DataFrame into staging.lead using latest raw_id
+         # Insert DataFrame into staging.lead using latest raw_id
         raw_id = insert_df_into_staging_lead(df)
         
         if raw_id:
             print(f"DataFrame data inserted into staging.lead successfully with raw_id: {raw_id}")
         else:
             print("Failed to insert DataFrame into staging.lead")
+
+        # Insert DataFrame into staging.client using new leads only
+        client_count = insert_df_into_staging_client(df, max_lead_id_before)
+        
+        if client_count > 0:
+            print(f"Client data inserted into staging.client successfully. {client_count} records added.")
+        else:
+            print("No client data inserted - no new leads found")
+
+        # Insert DataFrame into staging.tag using new leads only
+        tag_count = insert_df_into_staging_tag(df, max_lead_id_before)
+
+        if tag_count > 0:
+            print(f"Tag data inserted into staging.tag successfully. {tag_count} records added.")
+        else:
+            print("No tag data inserted - no new leads found")        
 
 
         # Display DataFrame information

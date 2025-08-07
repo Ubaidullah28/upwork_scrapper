@@ -137,6 +137,28 @@ def insert_raw_json_data(raw_json_data):
     conn.close()
     return job_id
 
+def get_max_lead_id():
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    cur.execute('''
+        SELECT MAX(lead_id) FROM staging.lead
+    ''')
+    
+    result = cur.fetchone()
+    if result and result[0] is not None:
+        max_lead_id = result[0]
+        print(f"Retrieved maximum lead_id from staging.lead: {max_lead_id}")
+        cur.close()
+        conn.close()
+        return max_lead_id
+    else:
+        print("No records found in staging.lead table, returning 0")
+        cur.close()
+        conn.close()
+        return 0
+
 def insert_df_into_staging_lead(df):
 
     if df.empty:
@@ -196,5 +218,121 @@ def insert_df_into_staging_lead(df):
     cur.close()
     conn.close()
     return raw_id
+
+def insert_df_into_staging_client(df, max_lead_id_before):
+    
+    if df.empty:
+        print("DataFrame is empty, nothing to insert")
+        return 0
+        
+    print(f"Using max_lead_id_before: {max_lead_id_before}")
+    
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # Get leads with lead_id greater than max_lead_id_before
+    cur.execute('''
+        SELECT lead_id FROM staging.lead 
+        WHERE lead_id > %s
+        ORDER BY lead_id
+    ''', (max_lead_id_before,))
+    
+    new_lead_ids = [row[0] for row in cur.fetchall()]
+    print(f"Found {len(new_lead_ids)} new lead_ids: {new_lead_ids}")
+    
+    if not new_lead_ids:
+        print("No new leads found to insert client data for")
+        cur.close()
+        conn.close()
+        return 0
+    
+    # Insert client data for each new lead
+    inserted_count = 0
+    for i, (index, row) in enumerate(df.iterrows()):
+        if i < len(new_lead_ids):
+            lead_id = new_lead_ids[i]
+            
+            cur.execute('''
+                INSERT INTO staging.client (
+                    client_name, 
+                    client_spent, 
+                    lead_id,
+                    payment_method
+                ) VALUES (%s, %s, %s, %s)
+            ''', (
+                row.get('Client Name', 'N/A'),          # client_name
+                row.get('Client Spent', 'N/A'),         # client_spent  
+                lead_id,                                 # lead_id
+                row.get('Payment Verified/Unverified', 'N/A')  # payment_method
+            ))
+            inserted_count += 1
+    
+    print(f"Inserted {inserted_count} client records into staging.client")
+    
+    conn.commit()
+    cur.close()
+    conn.close()
+    return inserted_count
+
+def insert_df_into_staging_tag(df, max_lead_id_before):
+    """
+    Insert DataFrame into staging.tag table for leads with lead_id greater than max_lead_id_before
+    
+    Args:
+        df: DataFrame containing tag data
+        max_lead_id_before: Maximum lead_id before the current insertion
+        
+    Returns:
+        int: Number of records inserted
+    """
+    
+    if df.empty:
+        print("DataFrame is empty, nothing to insert")
+        return 0
+        
+    print(f"Using max_lead_id_before for tags: {max_lead_id_before}")
+    
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # Get leads with lead_id greater than max_lead_id_before
+    cur.execute('''
+        SELECT lead_id FROM staging.lead 
+        WHERE lead_id > %s
+        ORDER BY lead_id
+    ''', (max_lead_id_before,))
+    
+    new_lead_ids = [row[0] for row in cur.fetchall()]
+    print(f"Found {len(new_lead_ids)} new lead_ids for tags: {new_lead_ids}")
+    
+    if not new_lead_ids:
+        print("No new leads found to insert tag data for")
+        cur.close()
+        conn.close()
+        return 0
+    
+    # Insert tag data for each new lead
+    inserted_count = 0
+    for i, (index, row) in enumerate(df.iterrows()):
+        if i < len(new_lead_ids):
+            lead_id = new_lead_ids[i]
+            
+            cur.execute('''
+                INSERT INTO staging.tag (
+                    tag_list, 
+                    lead_id
+                ) VALUES (%s, %s)
+            ''', (
+                row.get('Tags', 'N/A'),                 # tag_list
+                lead_id                                 # lead_id
+            ))
+            inserted_count += 1
+    
+    print(f"Inserted {inserted_count} tag records into staging.tag")
+    
+    conn.commit()
+    cur.close()
+    conn.close()
+    return inserted_count
 
 
