@@ -1,6 +1,6 @@
 import sys
 import json
-from upwork_scraping import scrape_upwork_jobs, json_to_dataframe
+from upwork_scraping import scrape_upwork_jobs, json_to_dataframe, wait_until_found_and_click
 from database_operation import (
     get_search_queries_from_db,
     get_source_info,
@@ -17,6 +17,7 @@ from database_operation import (
 
 )
 
+
 from datetime import datetime
 
 sys.stdout.reconfigure(encoding='utf-8')
@@ -31,7 +32,9 @@ def main():
             return
         
         print(f"Processing search query: {search_queries['search_criteria']}")
-        
+        wait_until_found_and_click(r"C:\Users\Administrator\Desktop\scraping\upworkJobsScraping\download.png")
+        print("clicked on cloud flare picture")
+ 
         # CHECK THE TIME FILTER - This might be the problem!
         last_time = read_last_scrape_time(search_queries["search_criteria"])
         print(f"Last scrape time: {last_time}")
