@@ -10,7 +10,11 @@ from database_operation import (
     insert_df_into_staging_lead,
     get_max_lead_id,
     insert_df_into_staging_client,
-    insert_df_into_staging_tag
+    insert_df_into_staging_tag,
+    process_all_staging_to_published,
+    mark_current_practice_processed,
+    reset_practice_status_if_none_active
+
 )
 
 from datetime import datetime
@@ -85,7 +89,15 @@ def main():
         if tag_count > 0:
             print(f"Tag data inserted into staging.tag successfully. {tag_count} records added.")
         else:
-            print("No tag data inserted - no new leads found")        
+            print("No tag data inserted - no new leads found")
+
+        result = process_all_staging_to_published()
+        print("data is inserted into published")     
+
+
+        mark_current_practice_processed()
+    
+        reset_practice_status_if_none_active()
 
 
         # Display DataFrame information

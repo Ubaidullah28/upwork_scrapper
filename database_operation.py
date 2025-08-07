@@ -335,4 +335,379 @@ def insert_df_into_staging_tag(df, max_lead_id_before):
     conn.close()
     return inserted_count
 
+import psycopg2
+import pandas as pd
+from database_operation import get_db_connection
 
+def get_new_leads_data():
+    """
+    Get all new leads data that don't exist in published.lead using your exact query
+    
+    Returns:
+        pd.DataFrame: DataFrame with new leads data
+    """
+    conn = get_db_connection()
+    
+    query = """
+    SELECT 
+        SL."lead_name",
+        SL."desc",
+        SL."time_posted",
+        SL."link",
+        SL."budget_type",
+        SL."hour_rate_low",
+        SL."hour_rate_high",
+        SL."fix_price",
+        SL."raw_id",
+        SL."lead_id" as staging_lead_id,
+        
+        SC."client_name",
+        SC."client_spent", 
+        SC."payment_method",
+        
+        ST."tag_list"
+    FROM 
+        "staging"."lead" SL 
+    LEFT JOIN 
+        "published"."lead" DL 
+    ON 
+        SL."link" = DL."link"
+    LEFT JOIN 
+        "staging"."client" SC 
+    ON 
+        SL."lead_id" = SC."lead_id"
+    LEFT JOIN 
+        "staging"."tag" ST 
+    ON 
+        SL."lead_id" = ST."lead_id"
+    WHERE 
+        DL."link" IS NULL
+    ORDER BY SL."lead_id";
+    """
+    
+    df = pd.read_sql_query(query, conn)
+    conn.close()
+    
+    print(f"📋 Found {len(df)} new leads to process")
+    return df
+
+def insert_leads_to_published(df):
+    """
+    Insert leads data into published.lead table
+    
+    Args:
+        df (pd.DataFrame): DataFrame containing leads data
+        
+    Returns:
+        dict: mapping of staging_lead_id to new published_lead_id
+    """
+    if df.empty:
+        print("No leads to insert")
+        return {}
+    
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    lead_id_mapping = {}  # staging_lead_id -> published_lead_id
+    inserted_count = 0
+    
+    print(f"🔄 Inserting {len(df)} leads into published.lead...")
+    
+    for _, row in df.iterrows():
+        cur.execute("""
+            INSERT INTO "published"."lead" (
+                "lead_name", 
+                "desc", 
+                "time_posted", 
+                "link", 
+                "budget_type",
+                "hour_rate_low",
+                "hour_rate_high", 
+                "fix_price"
+                
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING "lead_id"
+        """, (
+            row['lead_name'],
+            row['desc'], 
+            row['time_posted'],
+            row['link'],
+            row['budget_type'],
+            row['hour_rate_low'],
+            row['hour_rate_high'],
+            row['fix_price']
+            
+        ))
+        
+        new_lead_id = cur.fetchone()[0]
+        lead_id_mapping[row['staging_lead_id']] = new_lead_id
+        inserted_count += 1
+        
+        print(f"✅ Inserted lead: {row['lead_name'][:50]}... (New ID: {new_lead_id})")
+    
+    conn.commit()
+    cur.close()
+    conn.close()
+    
+    print(f"🎉 Successfully inserted {inserted_count} leads into published.lead")
+    return lead_id_mapping
+
+def insert_clients_to_published(df, lead_id_mapping):
+    """
+    Insert client data into published.client table based on available lead info.
+    
+    Args:
+        df (pd.DataFrame): DataFrame containing lead-related client data
+        lead_id_mapping (dict): mapping of staging_lead_id to published_lead_id
+        
+    Returns:
+        int: number of clients inserted
+    """
+    if df.empty:
+        print("No data to insert")
+        return 0
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    inserted_count = 0
+
+    print(f"🔄 Inserting client info for {len(df)} leads into published.client...")
+
+    for _, row in df.iterrows():
+        staging_lead_id = row['staging_lead_id']
+        published_lead_id = lead_id_mapping.get(staging_lead_id)
+
+        if published_lead_id is None:
+            print(f"⚠️ Warning: No published lead_id found for staging lead_id {staging_lead_id}")
+            continue
+
+        cur.execute("""
+            INSERT INTO "published"."client" (
+                "client_name", 
+                "client_spent", 
+                "lead_id",
+                "payment_method"
+            ) VALUES (%s, %s, %s, %s)
+        """, (
+            row.get('client_name', None),  # Still insert if available, otherwise NULL
+            row.get('client_spent', None),
+            published_lead_id,
+            row.get('payment_method', None)
+        ))
+
+        inserted_count += 1
+        print(f"✅ Inserted client info for lead ID: {published_lead_id}")
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    print(f"🎉 Successfully inserted {inserted_count} clients into published.client")
+    return inserted_count
+
+def insert_tags_to_published(df, lead_id_mapping):
+    """
+    Insert tag data into published.tag table
+    
+    Args:
+        df (pd.DataFrame): DataFrame containing tag data
+        lead_id_mapping (dict): mapping of staging_lead_id to published_lead_id
+        
+    Returns:
+        int: number of tags inserted
+    """
+    # Filter rows that have tag data
+    tag_df = df[
+        (df['tag_list'].notna()) & 
+        (df['tag_list'] != 'N/A') & 
+        (df['tag_list'] != '') & 
+        (df['tag_list'] != None)
+    ].copy()
+    
+    if tag_df.empty:
+        print("No tags to insert")
+        return 0
+    
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    inserted_count = 0
+    
+    print(f"🔄 Inserting {len(tag_df)} tags into published.tag...")
+    
+    for _, row in tag_df.iterrows():
+        staging_lead_id = row['staging_lead_id']
+        published_lead_id = lead_id_mapping.get(staging_lead_id)
+        
+        if published_lead_id is None:
+            print(f"⚠️ Warning: No published lead_id found for staging lead_id {staging_lead_id}")
+            continue
+            
+        cur.execute("""
+            INSERT INTO "published"."tag" (
+                "tag_list", 
+                "lead_id"
+            ) VALUES (%s, %s)
+        """, (
+            row['tag_list'],
+            published_lead_id
+        ))
+        
+        inserted_count += 1
+        print(f"✅ Inserted tags: {row['tag_list'][:50]}... (Lead ID: {published_lead_id})")
+    
+    conn.commit()
+    cur.close()
+    conn.close()
+    
+    print(f"🎉 Successfully inserted {inserted_count} tags into published.tag")
+    return inserted_count
+
+def process_all_staging_to_published():
+    """
+    Main function that processes all staging data to published tables
+    Calls all individual functions in sequence
+    
+    Returns:
+        dict: summary of all insertions
+    """
+    print("🚀 Starting complete staging to published transfer...")
+    print("="*60)
+    
+    # Step 1: Get new leads data using your query
+    print("Step 1: Getting new leads data...")
+    df = get_new_leads_data()
+    
+    if df.empty:
+        print("✅ No new data found - all staging data already exists in published tables")
+        return {
+            'leads_inserted': 0,
+            'clients_inserted': 0,
+            'tags_inserted': 0,
+            'message': 'No new data to process'
+        }
+    
+    print(f"Found {len(df)} new records to process")
+    print("-"*60)
+    
+    # Step 2: Insert leads first (must be first to get lead_id mapping)
+    print("Step 2: Inserting leads...")
+    lead_id_mapping = insert_leads_to_published(df)
+    print("-"*60)
+    
+    # Step 3: Insert clients using lead_id mapping
+    print("Step 3: Inserting clients...")
+    clients_inserted = insert_clients_to_published(df, lead_id_mapping)
+    print("-"*60)
+    
+    # Step 4: Insert tags using lead_id mapping  
+    print("Step 4: Inserting tags...")
+    tags_inserted = insert_tags_to_published(df, lead_id_mapping)
+    print("-"*60)
+    
+    summary = {
+        'leads_inserted': len(lead_id_mapping),
+        'clients_inserted': clients_inserted,
+        'tags_inserted': tags_inserted,
+        'lead_id_mapping': lead_id_mapping,
+        'message': 'Success'
+    }
+    
+    print("🎉 COMPLETE! Summary:")
+    print(f"   • Leads inserted: {summary['leads_inserted']}")
+    print(f"   • Clients inserted: {summary['clients_inserted']}")
+    print(f"   • Tags inserted: {summary['tags_inserted']}")
+    
+    return summary
+
+def check_staging_vs_published():
+    """
+    Quick check to see how many records are in staging vs published
+    and how many are new (would be inserted)
+    """
+    conn = get_db_connection()
+    
+    # Count staging records
+    staging_count = pd.read_sql_query(
+        'SELECT COUNT(*) as count FROM "staging"."lead"', 
+        conn
+    )['count'][0]
+    
+    # Count published records  
+    published_count = pd.read_sql_query(
+        'SELECT COUNT(*) as count FROM "published"."lead"',
+        conn
+    )['count'][0]
+    
+    # Count new records (using your duplicate-check query)
+    new_records_query = """
+    SELECT COUNT(*) as count
+    FROM "staging"."lead" SL 
+    LEFT JOIN "published"."lead" DL 
+    ON SL."link" = DL."link"
+    WHERE DL."link" IS NULL
+    """
+    new_count = pd.read_sql_query(new_records_query, conn)['count'][0]
+    
+    conn.close()
+    
+    print(f"📊 DATABASE STATUS:")
+    print(f"   • Records in staging.lead: {staging_count}")
+    print(f"   • Records in published.lead: {published_count}")
+    print(f"   • New records to be inserted: {new_count}")
+    print(f"   • Duplicate records (will be skipped): {staging_count - new_count}")
+    
+    return {
+        'staging_count': staging_count,
+        'published_count': published_count, 
+        'new_count': new_count,
+        'duplicate_count': staging_count - new_count
+    }
+
+
+
+
+
+def mark_current_practice_processed():
+    """Set status = 1 on the oldest practice with status = 0."""
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute('''
+        UPDATE "published"."practice"
+        SET "status" = 1
+        WHERE "id" = (
+            SELECT "id"
+            FROM "published"."practice"
+            WHERE "status" = 0
+            ORDER BY "id" ASC
+            LIMIT 1
+        )
+    ''')
+    conn.commit()
+    cur.close()
+    conn.close()
+    print("🔄 Marked oldest unpublished practice (status=0) as processed (status=1).")
+
+def reset_practice_status_if_none_active():
+    """
+    If there's no row with status = 0, reset all !=0 to 0.
+    """
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute('''
+        UPDATE "published"."practice"
+        SET "status" = 0
+        WHERE NOT EXISTS (
+            SELECT 1 FROM "published"."practice" WHERE "status" = 0
+        )
+        AND "status" != 0
+    ''')
+    rows = cur.rowcount
+    conn.commit()
+    cur.close()
+    conn.close()
+    if rows:
+        print(f"🔄 Reset {rows} practice rows to status = 0 (none were active).")
+    else:
+        print("ℹ No need to reset: there is already an active practice row.")
