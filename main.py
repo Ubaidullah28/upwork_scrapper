@@ -5,7 +5,9 @@ from database_operation import (
     get_search_queries_from_db,
     get_source_info,
     insert_jobs_into_public_job,
-    read_last_scrape_time
+    read_last_scrape_time,
+    insert_raw_json_data,
+    insert_df_into_staging_lead
 )
 
 from datetime import datetime
@@ -45,6 +47,22 @@ def main():
         # Insert jobs into public.job
         insert_jobs_into_public_job(df, source_info, search_queries["search_criteria"])
         print("data inserted into public.job")
+
+         # Insert raw JSON data using the latest job ID from public.job
+        job_id = insert_raw_json_data(json_result)
+        
+        if job_id:
+            print(f"Raw JSON data inserted successfully with job_id: {job_id}")
+        else:
+            print("Failed to insert raw JSON data")
+
+         # Step 3: Insert DataFrame into staging.lead using latest raw_id
+        raw_id = insert_df_into_staging_lead(df)
+        
+        if raw_id:
+            print(f"DataFrame data inserted into staging.lead successfully with raw_id: {raw_id}")
+        else:
+            print("Failed to insert DataFrame into staging.lead")
 
 
         # Display DataFrame information

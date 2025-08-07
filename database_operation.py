@@ -104,5 +104,97 @@ def insert_jobs_into_public_job(df, source_info, search_criteria):
         cur.close()
         conn.close()
 
+def insert_raw_json_data(raw_json_data):
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # Get the maximum ID from public.job table
+    cur.execute('''
+        SELECT MAX(id) FROM public.job
+    ''')
+    
+    result = cur.fetchone()
+    if result and result[0] is not None:
+        job_id = result[0]
+        print(f"Retrieved latest job_id from public.job: {job_id}")
+    else:
+        print("No records found in public.job table")
+        cur.close()
+        conn.close()
+        return None
+    
+    # Insert raw JSON data into raw.UpworkDataJson
+    cur.execute('''
+        INSERT INTO raw."UpworkDataJson" ("JobId", "RawJson")
+        VALUES (%s, %s)
+    ''', (job_id, raw_json_data))
+    
+    print(f"Inserted raw JSON data into raw.UpworkDataJson for job_id: {job_id}")
+    
+    conn.commit()
+    cur.close()
+    conn.close()
+    return job_id
+
+def insert_df_into_staging_lead(df):
+
+    if df.empty:
+        print("DataFrame is empty, nothing to insert")
+        return None
+        
+    conn = get_db_connection()
+    cur = conn.cursor()
+    
+    # Get the maximum ID from raw.UpworkDataJson table
+    cur.execute('''
+        SELECT MAX("RawId") FROM raw."UpworkDataJson"
+    ''')
+    
+    result = cur.fetchone()
+    if result and result[0] is not None:
+        raw_id = result[0]
+        print(f"Retrieved latest raw_id from raw.UpworkDataJson: {raw_id}")
+    else:
+        print("No records found in raw.UpworkDataJson table")
+        cur.close()
+        conn.close()
+        return None
+    
+    # Insert each row from DataFrame into staging.lead
+    inserted_count = 0
+    for index, row in df.iterrows():
+        # Map DataFrame columns to staging.lead columns
+        cur.execute('''
+            INSERT INTO staging.lead (
+                lead_name, 
+                "desc", 
+                time_posted, 
+                link, 
+                raw_id,
+                budget_type,
+                hour_rate_low,
+                hour_rate_high,
+                fix_price
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ''', (
+            row.get('Title', 'N/A'),                    # lead_name
+            row.get('Description', 'N/A'),              # desc  
+            row.get('Posted Time'),                     # time_posted
+            row.get('Job Link', 'N/A'),                 # link
+            raw_id,                                     # raw_id
+            row.get('Budget Type', 'N/A'),              # budget_type
+            row.get('Lower Hourly Rate', 'N/A'),        # hour_rate_low
+            row.get('Higher Hourly Rate', 'N/A'),       # hour_rate_high
+            row.get('Fixed Price', 'N/A')               # fix_price
+        ))
+        inserted_count += 1
+    
+    print(f"Inserted {inserted_count} lead records into staging.lead with raw_id: {raw_id}")
+    
+    conn.commit()
+    cur.close()
+    conn.close()
+    return raw_id
 
 
