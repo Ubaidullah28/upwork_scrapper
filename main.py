@@ -32,8 +32,7 @@ def main():
             return
         
         print(f"Processing search query: {search_queries['search_criteria']}")
-        wait_until_found_and_click(r"C:\Users\Administrator\Desktop\scraping\upworkJobsScraping\download.png")
-        print("clicked on cloud flare picture")
+       
  
         # CHECK THE TIME FILTER - This might be the problem!
         last_time = read_last_scrape_time(search_queries["search_criteria"])

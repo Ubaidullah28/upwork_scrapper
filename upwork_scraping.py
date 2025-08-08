@@ -101,21 +101,67 @@ def click_cloudflare_checkbox_pyautogui():
     pyautogui.click(799, 495)
     time.sleep(5)
 
-def wait_until_found_and_click(image_name, confidence=0.9):
-    time.sleep(8)
-    count = 0
-    while True:
-        count += 1
+# def wait_until_found_and_click(image_name, confidence=0.9):
+#     time.sleep(8)
+#     count = 0
+#     #print(f" Waiting for '{image_name}'...")
+#     while True:
+#         count += 1
+#         try:
+#             location = pyautogui.locateOnScreen(image_name, confidence=confidence)
+#             if location:
+#                 pyautogui.moveTo(pyautogui.center(location), duration=0.5)
+#                 pyautogui.click()
+#                 print(f" Clicked: {image_name}")
+#                 return
+#         except Exception as e:
+#             if count > 5:
+#                 break
+#             #print(f" Error locating {image_name}: {e}")
+#         time.sleep(2)
+
+
+import pyautogui
+import time
+
+def wait_until_found_and_click(image_name, confidence=0.9, max_clicks=2, max_retries=20):
+    """
+    Tries to find and click the given image on the screen.
+    Will click up to `max_clicks` times in case the image appears multiple times (e.g., Cloudflare checkboxes).
+    Will retry up to `max_retries` times total.
+    Silently skips if image never appears — no exception raised.
+    """
+    time.sleep(5)
+    clicks_done = 0
+    retries = 0
+
+    while retries < max_retries and clicks_done < max_clicks:
         try:
             location = pyautogui.locateOnScreen(image_name, confidence=confidence)
             if location:
                 pyautogui.moveTo(pyautogui.center(location), duration=0.5)
                 pyautogui.click()
-                return
+                clicks_done += 1
+                print(f" ✅ Clicked {clicks_done}/{max_clicks} -> {image_name}")
+                time.sleep(3)  # wait for Cloudflare to reload if necessary
+            else:
+                if clicks_done > 0:
+                    print(" ✅ Image disappeared after clicks. Moving on.")
+                    break
         except Exception as e:
-            if count > 5:
-                break
+            print(f" ⚠️ Error during locate/click: {e}")
+        
+        retries += 1
         time.sleep(2)
+
+    if clicks_done == 0:
+        print(f" ⚠️ Image never appeared: {image_name}")
+    elif clicks_done >= max_clicks:
+        print(" ✅ Reached maximum allowed clicks. Continuing...")
+
+
+
+
 
 def login_with_google(driver, email, password):
     driver.get("https://www.upwork.com/ab/account-security/login")
@@ -321,7 +367,7 @@ def scrape_upwork_jobs():
 
         driver.get(search_url)
         human_sleep(3, 5)
-        wait_until_found_and_click(os.getenv('CLOUDFLARE_IMAGE_PATH'))
+        wait_until_found_and_click(os.getenv('CLOUDFLARE_IMAGE_PATH'), confidence=0.6)
 
         last_scrape_time = read_last_scrape_time(query_text)
         query_jobs = extract_jobs_from_current_page(driver, last_scrape_time, query_text)
